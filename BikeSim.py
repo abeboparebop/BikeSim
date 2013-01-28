@@ -80,6 +80,7 @@ class BikeNetwork:
         for i in range(self.nStations):
             stn = self.G.node[i]
             print "\tStation %d has %d bikes and %d docks." % (i, stn['bikes'], stn['docks'])
+        print "\tTotal rides: %d" % self.nRides
         print "\tTotal dock fails: %d" % self.nDockFail
         print "\tTotal bike fails: %d" % self.nBikeFail
         print "\tCapital EDC: $%.02f" % self.capitalEDC
@@ -250,8 +251,8 @@ class Path:
 
 
 if __name__=='__main__':
-    random.seed(3)
-    np.random.seed(3)
+    random.seed(4)
+    np.random.seed(5)
     net = BikeNetwork()
     while (net.time < 1100):
         net.smallReport()
