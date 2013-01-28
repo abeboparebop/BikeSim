@@ -2,6 +2,7 @@ import networkx as nx
 import sys
 import math
 import numpy as np
+from scipy.stats import poisson
 
 if __name=='__main__':
     
@@ -15,19 +16,38 @@ class BikeNetwork:
         self.G.add_edge(1,3,tAB=10,tBA=15)
         self.G.add_edge(2,3,tAB=5,tBA=10)
         self.bikeList = []
+        self.amenityList = []
         self.nRides = 0
         self.nDockFail = 0
         self.nBikeFail = 0
 
-    def advance(self, dt):
-        # generate new riders
+        # standard timestep: 1 minute
+        self.dt = 1
+
+        # start at 100 rides per day (expressed on per-minute basis)
+        self.frequency = 0.069
+
+    def addStation(self,amenity, bikes, docks):
+        self.G.add_node
+
+    def advance(self):
+        # Generate new riders according to poisson distribution
+        # with some frequency.
+        n = poisson.rvs(self.frequency*self.dt)
+        for i in range(n):
+            self.generateRide()
         
         # move all the bikes by dt
         for i, bike in enumerate(self.bikeList):
-            self.bikeList[i].advance(dt)
+            self.bikeList[i].advance(self.dt)
 
         # check for completions
         self.collectAll
+
+    def generateRide(self):
+        # Choose origin and destination with probabilities
+        # weighted by amenity values.
+        
 
     def collectAll(self):
         killList = []
@@ -39,7 +59,12 @@ class BikeNetwork:
                     self.G[dest].bikes+=1
                 else:
                     print "dock fail!"
-                    
+                    self.nDockFail += 1
+                    # Eventually, generate new destination: nearest
+                    # station.
+
+                    # Right now, just kill the ride.
+                    killList.append(i)
 
         killList2 = np.array(killList)
         for i in range(len(killList2)):
@@ -58,6 +83,7 @@ class Biker:
 
     def advance(self,dt):
         self.time += dt
+        print
 
     def reached_dest(self):
         if (self.time > self.t_tot):
