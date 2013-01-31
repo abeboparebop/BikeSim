@@ -15,22 +15,29 @@ def weighted_choice(probs):
     return None
 
 class BikeNetwork:
-    def __init__(self):
+    def __init__(self, ridesPerDay):
         self.G = nx.DiGraph()
         self.bikeList = []
         self.amenityList = []
 
         self.nRides = 0
         self.nStations = 0
-        self.nDockFail = 0
-        self.nBikeFail = 0
+        self.nDockFail = []
+        self.nBikeFail = []
+        self.nOrigin = []
+        self.nDest = []
+
+        self.balancerList = []
+        self.maxBalancers = 1
+        self.nBalances = 0
+        self.dropOffs = []
+        self.pickUps = []
 
         # standard timestep: 1 minute
         self.dt = 1
         self.time = 0
 
-        # start at 100 rides per day (expressed on per-minute basis)
-        self.frequency = 0.069
+        self.ridesPerDay = ridesPerDay
 
         # ride likelihoods will be weighted by gaussian with
         # std. dev. given by tWeight
@@ -43,29 +50,31 @@ class BikeNetwork:
         # Which balance algorithm to use?
         self.algo = 0
 
-        self.addStation(amenity=1000, bikes=10, docks=20)
-        self.addStation(amenity=2000, bikes=10, docks=20)
-        self.addStation(amenity=3000, bikes=10, docks=20)
-        self.G.add_edge(0,1,time=5)
-        self.G.add_edge(1,0,time=5)
-        self.G.add_edge(0,2,time=10)
-        self.G.add_edge(2,0,time=15) 
-        self.G.add_edge(1,2,time=5)
-        self.G.add_edge(2,1,time=10)
-
         self.kioskCost = 17000
         self.bikeCost = 1000
         self.dockCost = 1500
         self.capitalCost = 0
-        for i in range(self.nStations):
-            stn = self.G.node[i]
-            bikes = stn['bikes']
-            docks = stn['docks']
-            cost = self.kioskCost + bikes*self.bikeCost + docks*self.dockCost
-            self.capitalCost += cost
+        # for i in range(self.nStations):
+        #     stn = self.G.node[i]
+        #     bikes = stn['bikes']
+        #     docks = stn['docks']
+        #     cost = self.kioskCost + bikes*self.bikeCost + docks*self.dockCost
+        #     self.capitalCost += cost
         self.COC = 0.03
         self.yrs = 8
         self.capitalEDC = self.capitalCost * self.COC / ( 1 - (1+self.COC)**(-self.yrs) ) / 365
+
+        ## Read in trip-generation probabilities
+        filename = "attr_simple.txt"
+        data=np.genfromtxt(filename,unpack=True, skip_header=1)
+        self.timeList = np.array(data[0])
+        self.resO = np.array(data[1])
+        self.resD = np.array(data[2])
+        self.empO = np.array(data[3])
+        self.empD = np.array(data[4])
+        self.svcO = np.array(data[5])
+        self.svcD = np.array(data[6])
+        self.attract = zip(self.resO, self.resD, self.empO, self.empD, self.svcO, self.svcD)
 
     def smallReport(self):
         print "t = %d:" % (self.time)
@@ -81,46 +90,86 @@ class BikeNetwork:
             stn = self.G.node[i]
             print "\tStation %d has %d bikes and %d docks." % (i, stn['bikes'], stn['docks'])
         print "\tTotal rides: %d" % self.nRides
-        print "\tTotal dock fails: %d" % self.nDockFail
-        print "\tTotal bike fails: %d" % self.nBikeFail
+        for i in range(self.nStations):
+            print "\t\tStation %d: %d origins, %d destinations, %d dock fails, %d bike fails." % (i, self.nOrigin[i], self.nDest[i], self.nDockFail[i], self.nBikeFail[i])
         print "\tCapital EDC: $%.02f" % self.capitalEDC
+        print "\tTotal rebalances: %d" % self.nBalances
 
     def addStation(self,amenity, bikes, docks):
         self.G.add_node(self.nStations, amenity=amenity, bikes=bikes, docks=docks)
         self.nStations+=1
         self.amenityList.append(amenity)
         if (self.loud):
-            print "New station with %d amenity, %d bikes, %d docks!" % (amenity, bikes, docks)
+            print "New station with %d population, %d employment, %d services, %d bikes, %d docks!" % (amenity[0], amenity[1], amenity[2], bikes, docks)
+        self.nBikeFail.append(0)
+        self.nDockFail.append(0)
+        self.nOrigin.append(0)
+        self.nDest.append(0)
+
+    def addBalancer(self,instr):
+        tTot = [instr[0][2]]
+        ## Change times to running totals as opposed to segment lengths
+        for i, el in enumerate(instr):
+            if (i >0):
+                tTot.append(el[2] + tTot[i-1])
+            instr[i][2] = tTot[i]
+
+        self.balancerList.append(Balancer(instr))
+        self.nBalances += 1
+        if (self.loud):
+            print "\tNew balancer:"
+            for el in instr:
+                if (el[1]<0):
+                    print "\t\tPick up %d at station %d in %d minutes." % (-el[1], el[0], el[2])
+                elif (el[1]>0):
+                    print "\t\tDrop off %d at station %d in %d minutes." % (el[1], el[0], el[2])
 
     def addRide(self, o, d):
         if (self.G.node[o]['bikes'] == 0):
-            # if the origin station has no bikes, fail out
-            self.nBikeFail += 1
+            ## If the origin station has no bikes, fail out.
+            self.nBikeFail[o] += 1
             if (self.loud):
                 print "\tTime=%d: bike fail at station %d!" % (self.time,o)
 
         else:
-            # get travel time between orig and dest
+            ## Get travel time between orig and dest
             tTot = self.G[o][d]['time']
-            
-            # create new biker with destination d
+
+            ## Create new biker with destination d
             self.bikeList.append(Biker(tTot,d))
             self.nRides += 1
             
-            # remove a bike from origin station
+            ## Remove a bike from origin station
             self.G.node[o]['bikes'] -= 1
             if (self.loud):
                 print "Time=%d: new ride started at station %d with destination %d." % (self.time, o, d)
                 print "%d bikes, %d docks remaining at station %d." % (self.G.node[o]['bikes'],self.G.node[o]['docks'], o)
 
+            ## Record the ride
+            self.nOrigin[o]+=1
+            self.nDest[d]+=1
+            
+
+
     def advance(self):
         # Generate n new riders according to poisson distribution
         # with default frequency.
-        n = poisson.rvs(self.frequency*self.dt)
+
+        ## 1440 minutes in a day:
+        day = int(self.time) / 1440
+
+        ## Attractiveness is split into 30-minute blocks:
+        halfHour = int(int(self.time) - day*1440) / 30
+        totAttr = sum(self.attract[halfHour])
+
+        ## Attractiveness is normalized to give about 0.5 rides per day.
+        ## Renormalize to the desired rides per day:
+        totAttr *= self.ridesPerDay/0.5
+        n = poisson.rvs(totAttr*self.dt)
         
         for i in range(n):
             # generate each rider
-            o, d = self.generateRide()
+            o, d = self.generateRide(halfHour)
             self.addRide(o,d)
             
         # move all the bikes by dt
@@ -129,7 +178,12 @@ class BikeNetwork:
             #if (self.loud):
                 #print "Bike %d now %d minutes from station %d." % (i, self.bikeList[i].tTot-self.bikeList[i].time, self.bikeList[i].dest)
 
-        # check for completions
+
+
+        for i, bal in enumerate(self.balancerList):
+            self.balancerList[i].advance(self.dt)
+
+        ## check for completions (bikes and rebalancers)
         self.collectAll()
 
         self.rebalance()
@@ -137,24 +191,199 @@ class BikeNetwork:
         self.time += self.dt
 
     def rebalance(self):
-        occup_list = []
+        ## Generate list of current occupancies and "needs" (distance
+        ## from half full).
+        occupList = []
+        myDtype = [('station',int), ('occup', float), ('docks', int), ('need', int), ('bikes', int), ('free',int)]
+        for i in range(self.nStations):
+            stn = self.G.node[i]
+            occup = float(stn['bikes'])/stn['docks']
+            need = int((0.5-occup)*stn['docks'])
+            occupList.append((i, occup, stn['docks'], need, stn['bikes'], stn['docks']-stn['bikes']))
+        
         if (self.algo==0):
-            for i in range(self.nStations):
-                stn = self.G.node[i]
-                occup = stn['bikes']/stn['docks']
-        return
+            if (len(self.balancerList) < self.maxBalancers):
+                ## If we have a rebalancer available:
 
-    def generateRide(self):
-        # Choose origin with probability
-        # weighted by amenity values.
-        orig = weighted_choice(self.amenityList)
+                ## Indices which will reference highest-priority pickups/drops
+                pickUp = -1
+                dropOff = -1
+                
+                ## First scan for dock fails, to find highest priority pick-ups:
 
-        # distance_list = list of distances to all other stations
+                ## These lines turn occupList into a numpy array, and then
+                ## sort by free docks (asc), breaking ties on size (desc).
+                occupArr = np.array(occupList, dtype=myDtype)
+                ## sort by size, asc
+                sizeSortA = np.sort(occupArr, order=['docks'])
+                ## reverse
+                sizeSortD = sizeSortA[::-1]
+                ## sort by bikes, asc
+                freeSortA = np.sort(sizeSortD, order=['free'])
+
+                for el in freeSortA:
+                    if (el['free'] > 1):
+                        ## Only looking for stations with 0 or 1 free docks.
+                        break
+                    k = el['station']
+                    if (k not in self.pickUps):
+                        ## Not already scheduled
+                        pickUp = k
+                        break
+
+                ## sort by occup, desc
+                occupSortA = np.sort(sizeSortD, order=['occup'])
+                occupSortD = occupSortA[::-1]
+
+                for el in occupSortD:
+                    k = el['station']
+                    if (pickUp != -1):
+                        ## Already got one to pick up.
+                        break
+                    if (el['occup'] < 0.8):
+                        ## No need to rebalance.
+                        break
+                    if (k not in self.pickUps):
+                        ## Not already scheduled
+                        pickUp = k
+                        break
+
+                ## Now scan for bike fails, to find highest priority drop-offs:
+
+                ## Sort by bikes (asc).
+                bikeSortA = np.sort(sizeSortD, order=['bikes'])
+
+                for el in bikeSortA:
+                    if (el['bikes'] > 1):
+                        ## Only looking for stations with 0 or 1 bikes.
+                        break
+                    k = el['station']
+                    if (k not in self.dropOffs):
+                        ## Not already scheduled
+                        dropOff = k
+                        break
+
+                ## sort by occup, asc
+                for el in occupSortA:
+                    k = el['station']
+                    if (dropOff != -1):
+                        ## Already got one to pick up
+                        break
+                    if (el['occup'] > 0.2):
+                        ## No need to rebalance.
+                        break
+                    if (k not in self.dropOffs):
+                        ## Not already scheduled
+                        dropOff = k
+                        break
+
+                if (pickUp != -1 and dropOff != -1):
+                    PUstn = self.G.node[pickUp]
+                    DOstn = self.G.node[dropOff]
+                    
+                    ## Leave at least 40% of docks full:
+                    freeBikes = int(PUstn['bikes']-0.4*PUstn['docks'])
+                    
+                    ## Leave at least 40% of docks free:
+                    needBikes = int(0.6*DOstn['docks'] - DOstn['bikes'])
+                    transfer = min(freeBikes,needBikes)
+
+                    ## Create list of instructions: pickup first then dropoff
+                    newInstrList = [[pickUp, -transfer, 10],
+                                    [dropOff, transfer, 5+transfer]]
+
+                    ## Send new balancer into the field
+                    self.addBalancer(newInstrList)
+
+                    ## Keep track of which stations are scheduled
+                    self.pickUps.append(pickUp)
+                    self.dropOffs.append(dropOff)
+                    
+                elif (pickUp != -1 and dropOff == -1):
+                    PUstn = self.G.node[pickUp]
+                    
+                    ## Haven't got a drop-off station yet
+                    ## Drop off at two stations with most free docks
+                    freeSortA = np.sort(sizeSortD, order=['free'])
+                    freeSortD = freeSortA[::-1]
+
+                    dropOff1 = freeSortD[0]['station']
+                    dropOff2 = freeSortD[1]['station']
+                    
+                    DOstn1 = self.G.node[dropOff1]
+                    DOstn2 = self.G.node[dropOff2]
+
+                    ## Leave at least 40% of docks full:
+                    freeBikes = int(PUstn['bikes']-0.4*PUstn['docks'])
+
+                    ## Split the bikes between the two stations
+                    howMany = int(freeBikes/2)
+
+                    ## Generate instruction list
+                    newInstrList = [[pickUp, -howMany*2, 10],
+                                    [dropOff1, howMany, 5+howMany*2],
+                                    [dropOff2, howMany, 5+howMany]]
+
+                    ## Send new balancer into the field
+                    self.addBalancer(newInstrList)
+
+                    ## Keep track of schedules
+                    self.pickUps.append(pickUp)
+                    self.dropOffs.append(dropOff1)
+                    self.dropOffs.append(dropOff2)
+
+                elif (pickUp == -1 and dropOff != -1):
+                    DOstn = self.G.node[dropOff]
+                    
+                    ## Haven't got a pick-up station yet
+                    ## Pick up from two stations with most free bikes
+                    bikeSortA = np.sort(sizeSortD, order=['bikes'])
+                    bikeSortD = bikeSortA[::-1]
+
+                    pickUp1 = bikeSortD[0]['station']
+                    pickUp2 = bikeSortD[1]['station']
+                    
+                    PUstn1 = self.G.node[pickUp1]
+                    PUstn2 = self.G.node[pickUp2]
+
+                    ## Leave at least 40% of docks free:
+                    needBikes = int(0.6*DOstn['docks'] - DOstn['bikes'])
+
+                    ## Split the bikes between the two stations
+                    howMany = int(needBikes/2)
+
+                    ## Generate instruction list
+                    newInstrList = [[pickUp1, -howMany, 10],
+                                    [pickUp2, -howMany, 5+howMany],
+                                    [dropOff, howMany*2, 5+howMany]]
+
+                    ## Send new balancer into the field
+                    self.addBalancer(newInstrList)
+
+                    ## Keep track of schedules
+                    self.dropOffs.append(dropOff)
+                    self.pickUps.append(pickUp1)
+                    self.pickUps.append(pickUp2)
+
+
+    def generateRide(self, halfHour):
+        ## Choose origin with probability weighted by "origin" amenity values.
+        ## Amenity = pop*pop-based attractiveness
+        temp = np.array(self.amenityList)
+        pop = temp[:,0]
+        emp = temp[:,1]
+        svc = temp[:,2]
+        totAttrO = pop*self.resO[halfHour] + emp*self.empO[halfHour] + svc*self.svcO[halfHour]
+        #print totAttrO
+        orig = weighted_choice(totAttrO)
+
+        ## Generate probability list using "destination" attractiveness,
+        ## as well as a Gaussian weighting on distance.
         probList = []
         for i in range(self.nStations):
             if (self.G.has_edge(orig,i)):
                 time = self.G[orig][i]['time']
-                amenity = self.G.node[i]['amenity']
+                amenity = self.amenityList[i][0]*self.resD[halfHour] + self.amenityList[i][1]*self.empD[halfHour] + self.amenityList[i][2]*self.svcD[halfHour]
                 prob = amenity*math.exp(-time**2.0/(2*self.tWeight**2.0))
             else:
                 prob = 0
@@ -165,6 +394,8 @@ class BikeNetwork:
         return orig, dest
 
     def collectAll(self):
+        # "Cycle" (hah) through the bikes, and see if they've reached
+        # their destinations.
         killList = []
         for i, bike in enumerate(self.bikeList):
             if (self.bikeList[i].reached_dest()):
@@ -174,12 +405,12 @@ class BikeNetwork:
                     killList.append(i)
                     dStn['bikes']+=1
                     if (self.loud):
-                        print "Time=%d: bike %d reached destination %d!" % (self.time,i, d)
-                        print "Station %d now has %d bikes, %d docks." % (d, dStn['bikes'], dStn['docks'])
+                        print "\tTime=%d: bike %d reached destination %d!" % (self.time,i, d)
+                        print "\tStation %d now has %d bikes, %d docks." % (d, dStn['bikes'], dStn['docks'])
                 else:
                     if (self.loud):
                         print "\tTime=%d: dock fail for bike %d at destination %d!" % (self.time, i, d)
-                    self.nDockFail += 1
+                    self.nDockFail[d] += 1
                     
                     # Generate new destination: nearest
                     # station.
@@ -200,14 +431,128 @@ class BikeNetwork:
                     self.bikeList[i].dest = which
                     self.bikeList[i].tTot = minTime
                     if (self.loud):
-                        print "New destination is station %d in %d minutes." % (which, minTime)
+                        print "\tNew destination for bike %d is station %d in %d minutes." % (i, which, minTime)
 
         # Delete all bikes which successfully reached destination.
         killList2 = np.array(killList)
         for i in range(len(killList2)):
             del self.bikeList[killList2[i]]
             killList2 = killList2-1
-                
+
+        # Now cycle through the rebalancers and do the same thing.
+        killList = []
+        for i, bal in enumerate(self.balancerList):
+            if (self.balancerList[i].reached_dest()):
+                # get the destination
+                d = bal.instr[0][0]
+                dStn = self.G.node[d]
+                killList.append(i)
+
+                ## This if statement is for pick-ups.
+                if (bal.instr[0][1] < 0):
+                    if (self.loud): print "\tRebalancer %d picking up from station %d" % (i, d)
+                    toGet = -bal.instr[0][1]
+                    freeBikes = dStn['bikes'] - 1
+
+                    ## Remove from pickup list.
+                    self.pickUps.remove(d)
+
+                    ## Are there enough bikes for pickup?
+                    if (freeBikes >= toGet):
+                        ## Good: now pick up toGet bikes.
+                        if (self.loud): print "\tPicking up %d bikes" % (toGet)
+                        self.balancerList[i].bikes += toGet
+                        dStn['bikes'] -= toGet
+
+                    elif (freeBikes < toGet):
+                        ## Bad: only pick up freeBikes bikes.
+                        if (self.loud): print "\tWanted to pick up %d, but only %d bikes free." % (toGet, freeBikes)
+                        self.balancerList[i].bikes += freeBikes
+                        dStn['bikes'] -= freeBikes
+
+                    if (self.loud): print "\tStation now has %d bikes, %d docks." % (dStn['bikes'],dStn['docks'])                        
+
+                ## This if statement is for drop-offs.
+                elif (bal.instr[0][1] > 0):
+                    if (self.loud): print "\tRebalancer %d dropping off at station %d" % (i, d)
+                    toDrop = bal.instr[0][1]
+                    balBikes = bal.bikes
+                    freeSpaces = dStn['docks'] - dStn['bikes'] - 1
+
+                    ## Remove from dropoff list.
+                    self.dropOffs.remove(d)
+
+                    ## Are there enough bikes to drop?
+                    if (balBikes < toDrop):
+                        ## Bad news: not enough bikes to follow orders.
+                        if (self.loud): print "\tOops: meant to drop off %d bikes but only have %d." % (toDrop, balBikes)
+                        toDrop = balBikes
+
+                    ## Are there enough free spaces?
+                    if (freeSpaces >= toDrop):
+                        ## Good: drop the bikes.
+                        if (self.loud): print "\tDropping off %d bikes" % (toDrop)
+                        self.balancerList[i].bikes -= toDrop
+                        dStn['bikes'] += toDrop
+                        
+                    ## Not enough free space?
+                    elif (freeSpaces < toDrop):
+                        ## Uh-oh. Not enough spaces.
+                        ## Drop only freeSpaces bikes and then generate new destination.
+                        if (self.loud): print "\tWanted to drop off %d bikes, but only %d docks free." % (toDrop, freeSpaces)
+                        self.balancerList[i].bikes -= freeSpaces
+                        dStn['bikes'] += freeSpaces
+
+                        ## Then generate new destination.
+                        ## Does the rebalancer have other dropoff destinations thereafter?
+                        if (len(bal.instr) > 1):
+                            ## The assumption is that if there are more stations in the
+                            ## instruction sequence, at least one must be a dropoff.
+                            ## Otherwise, we would end up with bikes on the rebalancer
+                            ## at the end of the sequence: bad.
+                        
+                            ## Add the extra bikes to the next dropoff.
+                            for k in range(1,len(bal.instr)):
+                                if (bal.instr[k][1] > 0):
+                                    self.balancerList[i].instr[k][1] += self.balancerList[i].bikes
+                                    if (self.loud): print "\tAdded %d bikes to next dropoff." % (self.balancerList[i].bikes)
+                                    break
+                        else:
+                            ## If no, generate new destination: station with most free docks.
+                            maxDocksFree = 0
+                            which = 0
+                            for k in range(self.nStations):
+                                stn = self.G.node[k]
+                                if (stn['docks'] - stn['bikes'] > maxDocksFree):
+                                    maxDocksFree = stn['docks']-stn['bikes']
+                                    which = k
+                        
+                            ## Travel time for rebalancer is always 5 minutes drive-time + 1 per bike
+                            travelTime = 5 + self.balancerList[i].bikes
+                        
+                            ## Generate a new instruction to drop off remaining bikes:
+                            newInstr = [which, self.balancerList[i].bikes, travelTime]
+                            if (self.loud): print "\tNew destination: drop off remaining %d bikes at station %d in %d minutes." % (bal.bikes, which, travelTime)
+                            ## Append it to balancer's instruction sequence:
+                            self.balancerList[i].instr.append(newInstr)
+
+        ## Pop all completed instructions, and if a rebalancer has
+        ## no more (and no bikes), kill it
+        killList2 = np.array(killList)
+        for i in range(len(killList2)):
+            if (len(self.balancerList[killList2[i]].instr) > 1):
+                ## There are remaining instructions: just pop, don't kill.
+                self.balancerList[killList2[i]].instr.pop(0)
+            else:
+                ## No remaining instructions: kill.
+                if (self.balancerList[killList2[i]].bikes > 0):
+                    print "..."
+                    print "ERROR ERROR: rebalancer has bikes but no more instructions!"
+                    print "Lost %d bike(s)!" % (self.balancerList[killList2[i]].bikes)
+                    print "..."
+                del self.balancerList[killList2[i]]
+                killList2 = killList2-1
+
 class Biker:
     def __init__(self, tTot, dest):
         # tTot is the total time of the given path
@@ -223,6 +568,31 @@ class Biker:
 
     def reached_dest(self):
         if (self.time >= self.tTot):
+            # Time's up: we're at the destination station.
+            return True
+
+class Balancer:
+    def __init__(self, instr):
+        # bikes is the current number of bikes being hauled
+        self.bikes = 0
+        
+        # instrStack consists of a list of lists. Each element
+        # of this list is of the form [station, # bikes to drop off,
+        # time]. A negative dropoff number represents pickups.
+
+        self.instr = instr
+
+        # The stack of instructions will be inflexibly followed,
+        # unless the number of bikes to be picked up/ dropped off
+        # can't be, due to full or empty stations upon arrival.
+
+        self.time = 0
+
+    def advance(self,dt):
+        self.time += dt
+
+    def reached_dest(self):
+        if (self.time >= self.instr[0][2]):
             # Time's up: we're at the destination station.
             return True
         
@@ -251,10 +621,47 @@ class Path:
 
 
 if __name__=='__main__':
-    random.seed(4)
+    random.seed(10)
     np.random.seed(5)
-    net = BikeNetwork()
-    while (net.time < 1100):
+    net = BikeNetwork(ridesPerDay=194)
+    filename = "pilot_prop.txt"
+    data=np.genfromtxt(filename,unpack=True, skip_header=1)
+    lat = np.array(data[1])*math.pi/180
+    lon = np.array(data[2])*math.pi/180
+
+    ## constants for linear model relating crow-flies distance and
+    ## elevation change (in meters) to travel time (in minutes)
+    c1 = 0.0059
+    c2 = 0.0328
+    height = np.array(data[3])
+    pop = np.array(data[4])
+    emp = np.array(data[5])
+    svc = np.array(data[6]+data[7]+data[8]+data[9])
+    attr = np.array(data[4]) + np.array(data[5])
+    bikes = data[10]
+    docks = data[11]
+    
+    nStations = len(lat)
+
+    for i in range(nStations):
+        net.addStation(amenity=[int(pop[i]),int(emp[i]),int(svc[i])], bikes=int(bikes[i]), docks=int(docks[i]))
+
+    #net.G.add_edge(2,1,time=10)
+
+    times = np.zeros(shape=(nStations,nStations))
+    for i in range(nStations):
+        for j in range(nStations):
+            deltaEl = height[j]-height[i]
+            
+            ## distance in meters
+            dist = 1609*2*3950*math.asin(math.sqrt(math.sin(0.5*(lat[i]-lat[j]))**2+math.cos(lat[i])*math.cos(lat[j])*math.sin(0.5*(lon[i]-lon[j]))**2))
+            
+            times[i][j] = c1*dist + c2*deltaEl
+            net.G.add_edge(i,j,time=times[i][j])
+
+    
+            
+    while (net.time < 14400):
         net.smallReport()
         net.advance()
 
