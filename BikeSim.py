@@ -657,9 +657,10 @@ if __name__=='__main__':
     emp = np.array(data[5])
     svc = np.array(data[6]+data[7]+data[8]+data[9])
     attr = np.array(data[4]) + np.array(data[5])
-    bikes = data[10]
-    docks = data[11]
-    state_init = [bikes,docks]
+    stations = map(int, data[10])
+    stateInit = stations
+
+    bikeDocks = [[4,8],[7,13],[10,18],[13,22]]
     
     nStations = len(lat)
 
@@ -669,7 +670,7 @@ if __name__=='__main__':
         print "sim %d" % (i+1)
         net = BikeNetwork(ridesPerDay=194, loud=False)
         for i in range(nStations):
-            net.addStation(amenity=[int(pop[i]),int(emp[i]),int(svc[i])], bikes=int(bikes[i]), docks=int(docks[i]))
+            net.addStation(amenity=[int(pop[i]),int(emp[i]),int(svc[i])], bikes=int(bikeDocks[stateInit[i]][0]), docks=int(bikeDocks[stateInit[i]][1]))
     
         ## Calculate times between stations according to simple linear model:
         times = np.zeros(shape=(nStations,nStations))
