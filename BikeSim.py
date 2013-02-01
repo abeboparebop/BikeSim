@@ -90,17 +90,23 @@ class BikeNetwork:
             print "\tTotal balancer hours/day: %f" % (24.0*float(self.bTime)/self.time)
 
         ## Calculate total capital costs per day
-        self.kioskCost = 17000
-        self.bikeCost = 1000
-        self.dockCost = 1500
+        self.cES = 30564
+        self.cS = 39301
+        self.cM = 48039
+        self.cL = 56776
+        self.cD = 709+307
         
         self.capitalCost = 0
         for i in range(self.nStations):
-            stn = self.G.node[i]
-            bikes = stn['bikes']
-            docks = stn['docks']
-            cost = self.kioskCost + bikes*self.bikeCost + docks*self.dockCost
-            self.capitalCost += cost
+            nDocks = self.G.node[i]['docks'] 
+            if (nDocks>= 7 and nDocks < 11):
+                self.capitalCost += self.cES + (nDocks-7)*self.cD
+            elif (nDocks<15):
+                self.capitalCost += self.cS + (nDocks-11)*self.cD
+            elif (nDocks<19):
+                self.capitalCost += self.cM + (nDocks-15)*self.cD
+            elif (nDocks<=23):
+                self.capitalCost += self.cL + (nDocks-19)*self.cD
 
         self.balancerCost = 25000
         self.capitalCost += self.maxBalancers*self.balancerCost
@@ -628,29 +634,6 @@ class Balancer:
         if (self.time >= self.instr[0][2]):
             # Time's up: we're at the destination station.
             return True
-        
-class Station:
-    def __init__(self, amenity):
-        # Amenity is (something like) the number of 
-        # residential/commercial uses within the geographic
-        # range of the station.
-
-        # It's used to generate the number of rides at each station
-        # (or more accurately the probability of any given station
-        # being the start or endpoint of a ride)
-        
-        self.amenity = amenity
-
-class Path:
-    def __init__(self, tAB, tBA):
-        # tAB and tBA are the times required to go from station A
-        # to B and B to A respectively. Typically these will be
-        # symmetric but not if (e.g.) a hill is involved.
-
-        # Thinking of times as measured in minutes right now.
-        
-        self.tAB = tAB
-        self.tBA = tBA
 
 
 if __name__=='__main__':
@@ -676,14 +659,15 @@ if __name__=='__main__':
     attr = np.array(data[4]) + np.array(data[5])
     bikes = data[10]
     docks = data[11]
+    state_init = [bikes,docks]
     
     nStations = len(lat)
 
-    nSims = 20
+    nSims = 10
     costList = []
     for i in range(nSims):
         print "sim %d" % (i+1)
-        net = BikeNetwork(ridesPerDay=194, loud=True)
+        net = BikeNetwork(ridesPerDay=194, loud=False)
         for i in range(nStations):
             net.addStation(amenity=[int(pop[i]),int(emp[i]),int(svc[i])], bikes=int(bikes[i]), docks=int(docks[i]))
     
