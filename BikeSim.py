@@ -15,7 +15,7 @@ def weighted_choice(probs):
     return None
 
 class BikeNetwork:
-    def __init__(self, ridesPerDay):
+    def __init__(self, ridesPerDay, loud=True):
         self.G = nx.DiGraph()
         self.bikeList = []
         self.amenityList = []
@@ -29,6 +29,7 @@ class BikeNetwork:
 
         self.balancerList = []
         self.maxBalancers = 1
+        self.bTime = 0
         self.nBalances = 0
         self.dropOffs = []
         self.pickUps = []
@@ -45,24 +46,10 @@ class BikeNetwork:
 
         # Diagnostic variable: if True, we'll print out a load of statements
         # during a simulation.
-        self.loud = True
+        self.loud = loud
 
         # Which balance algorithm to use?
         self.algo = 0
-
-        self.kioskCost = 17000
-        self.bikeCost = 1000
-        self.dockCost = 1500
-        self.capitalCost = 0
-        # for i in range(self.nStations):
-        #     stn = self.G.node[i]
-        #     bikes = stn['bikes']
-        #     docks = stn['docks']
-        #     cost = self.kioskCost + bikes*self.bikeCost + docks*self.dockCost
-        #     self.capitalCost += cost
-        self.COC = 0.03
-        self.yrs = 8
-        self.capitalEDC = self.capitalCost * self.COC / ( 1 - (1+self.COC)**(-self.yrs) ) / 365
 
         ## Read in trip-generation probabilities
         filename = "attr_simple.txt"
@@ -77,23 +64,67 @@ class BikeNetwork:
         self.attract = zip(self.resO, self.resD, self.empO, self.empD, self.svcO, self.svcD)
 
     def smallReport(self):
-        print "t = %d:" % (self.time)
-        print "\tRiders = %d" % (len(self.bikeList))
-        for i in range(self.nStations):
-            stn = self.G.node[i]
-            print "\tStation %d has %d bikes and %d docks." % (i, stn['bikes'], stn['docks'])
+        if (self.loud):
+            print "t = %d" % (self.time)
+            print "\tRiders = %d" % (len(self.bikeList))
+            for i in range(self.nStations):
+                stn = self.G.node[i]
+                print "\tStation %d has %d bikes and %d docks." % (i, stn['bikes'], stn['docks'])
 
     def bigReport(self):
-        print "t = %d:" % (self.time)
-        print "\tRiders = %d" % (len(self.bikeList))
+        if (self.loud):
+            print "t = %d:" % (self.time)
+            print "\tRiders = %d" % (len(self.bikeList))
+            for i in range(self.nStations):
+                stn = self.G.node[i]
+                print "\tStation %d has %d bikes and %d docks." % (i, stn['bikes'], stn['docks'])
+                
+            print "\tTotal rides: %d" % self.nRides
+            
+            for i in range(self.nStations):
+                print "\t\tStation %d: %d origins, %d destinations, %d dock fails, %d bike fails." % (i, self.nOrigin[i], self.nDest[i], self.nDockFail[i], self.nBikeFail[i])
+
+            print "\tTotal rebalances: %d" % self.nBalances
+            print "\tTotal dock fails: %d" % sum(self.nDockFail)
+            print "\tTotal bike fails: %d" % sum(self.nBikeFail)
+            print "\tTotal balancer hours/day: %f" % (24.0*float(self.bTime)/self.time)
+
+        ## Calculate total capital costs per day
+        self.kioskCost = 17000
+        self.bikeCost = 1000
+        self.dockCost = 1500
+        
+        self.capitalCost = 0
         for i in range(self.nStations):
             stn = self.G.node[i]
-            print "\tStation %d has %d bikes and %d docks." % (i, stn['bikes'], stn['docks'])
-        print "\tTotal rides: %d" % self.nRides
-        for i in range(self.nStations):
-            print "\t\tStation %d: %d origins, %d destinations, %d dock fails, %d bike fails." % (i, self.nOrigin[i], self.nDest[i], self.nDockFail[i], self.nBikeFail[i])
-        print "\tCapital EDC: $%.02f" % self.capitalEDC
-        print "\tTotal rebalances: %d" % self.nBalances
+            bikes = stn['bikes']
+            docks = stn['docks']
+            cost = self.kioskCost + bikes*self.bikeCost + docks*self.dockCost
+            self.capitalCost += cost
+
+        self.balancerCost = 25000
+        self.capitalCost += self.maxBalancers*self.balancerCost
+        self.COC = 0.03
+        self.yrs = 8
+        self.capitalDC = self.capitalCost * self.COC / ( 1 - (1+self.COC)**(-self.yrs) ) / 365
+
+        ## Calculate total labor costs
+        ## $20/hour, in dollars per minute:
+        self.laborUnitCost = 0.3333
+        self.laborDC = self.laborUnitCost*self.bTime / (self.time/1440)
+
+        ## Calculate bike/dock fail costs
+        ## Assume each failure is worth $10 in customer outrage
+        self.failCost = 20.0
+        self.failDC = self.failCost * (sum(self.nDockFail) + sum(self.nBikeFail)) / (self.time/1440)
+
+        if (self.loud):
+            print ""
+            print "\tDaily capital cost: $%.02f" % (self.capitalDC)
+            print "\tDaily labor cost: $%.02f" % (self.laborDC)
+            print "\tDaily failure cost: $%.02f" % (self.failDC)
+
+        return [self.capitalDC, self.laborDC, self.failDC]
 
     def addStation(self,amenity, bikes, docks):
         self.G.add_node(self.nStations, amenity=amenity, bikes=bikes, docks=docks)
@@ -162,9 +193,9 @@ class BikeNetwork:
         halfHour = int(int(self.time) - day*1440) / 30
         totAttr = sum(self.attract[halfHour])
 
-        ## Attractiveness is normalized to give about 0.5 rides per day.
+        ## Attractiveness table is normalized to give about 0.6 rides per day.
         ## Renormalize to the desired rides per day:
-        totAttr *= self.ridesPerDay/0.5
+        totAttr *= self.ridesPerDay/0.59
         n = poisson.rvs(totAttr*self.dt)
         
         for i in range(n):
@@ -531,10 +562,11 @@ class BikeNetwork:
                             travelTime = 5 + self.balancerList[i].bikes
                         
                             ## Generate a new instruction to drop off remaining bikes:
-                            newInstr = [which, self.balancerList[i].bikes, travelTime]
+                            newInstr = [which, self.balancerList[i].bikes, bal.time + travelTime]
                             if (self.loud): print "\tNew destination: drop off remaining %d bikes at station %d in %d minutes." % (bal.bikes, which, travelTime)
                             ## Append it to balancer's instruction sequence:
                             self.balancerList[i].instr.append(newInstr)
+                            self.dropOffs.append(which)
 
         ## Pop all completed instructions, and if a rebalancer has
         ## no more (and no bikes), kill it
@@ -550,6 +582,7 @@ class BikeNetwork:
                     print "ERROR ERROR: rebalancer has bikes but no more instructions!"
                     print "Lost %d bike(s)!" % (self.balancerList[killList2[i]].bikes)
                     print "..."
+                self.bTime += self.balancerList[killList2[i]].time
                 del self.balancerList[killList2[i]]
                 killList2 = killList2-1
 
@@ -621,18 +654,21 @@ class Path:
 
 
 if __name__=='__main__':
-    random.seed(10)
+    random.seed(103)
     np.random.seed(5)
-    net = BikeNetwork(ridesPerDay=194)
+
+    ## Initialize network
+
+    ## Constants for linear model relating crow-flies distance and
+    ## elevation change (in meters) to travel time (in minutes):
+    c1 = 0.0059
+    c2 = 0.0328
+
+    ## Get the station data:
     filename = "pilot_prop.txt"
     data=np.genfromtxt(filename,unpack=True, skip_header=1)
     lat = np.array(data[1])*math.pi/180
     lon = np.array(data[2])*math.pi/180
-
-    ## constants for linear model relating crow-flies distance and
-    ## elevation change (in meters) to travel time (in minutes)
-    c1 = 0.0059
-    c2 = 0.0328
     height = np.array(data[3])
     pop = np.array(data[4])
     emp = np.array(data[5])
@@ -643,26 +679,42 @@ if __name__=='__main__':
     
     nStations = len(lat)
 
-    for i in range(nStations):
-        net.addStation(amenity=[int(pop[i]),int(emp[i]),int(svc[i])], bikes=int(bikes[i]), docks=int(docks[i]))
-
-    #net.G.add_edge(2,1,time=10)
-
-    times = np.zeros(shape=(nStations,nStations))
-    for i in range(nStations):
-        for j in range(nStations):
-            deltaEl = height[j]-height[i]
-            
-            ## distance in meters
-            dist = 1609*2*3950*math.asin(math.sqrt(math.sin(0.5*(lat[i]-lat[j]))**2+math.cos(lat[i])*math.cos(lat[j])*math.sin(0.5*(lon[i]-lon[j]))**2))
-            
-            times[i][j] = c1*dist + c2*deltaEl
-            net.G.add_edge(i,j,time=times[i][j])
-
+    nSims = 20
+    costList = []
+    for i in range(nSims):
+        print "sim %d" % (i+1)
+        net = BikeNetwork(ridesPerDay=194, loud=True)
+        for i in range(nStations):
+            net.addStation(amenity=[int(pop[i]),int(emp[i]),int(svc[i])], bikes=int(bikes[i]), docks=int(docks[i]))
     
-            
-    while (net.time < 14400):
-        net.smallReport()
-        net.advance()
-
-    net.bigReport()
+        ## Calculate times between stations according to simple linear model:
+        times = np.zeros(shape=(nStations,nStations))
+        for i in range(nStations):
+            for j in range(nStations):
+                deltaEl = height[j]-height[i]
+                
+                ## Distance in meters between lat-long pair:
+                dist = 1609*2*3950*math.asin(math.sqrt(math.sin(0.5*(lat[i]-lat[j]))**2+math.cos(lat[i])*math.cos(lat[j])*math.sin(0.5*(lon[i]-lon[j]))**2))
+                
+                times[i][j] = c1*dist + c2*deltaEl
+                net.G.add_edge(i,j,time=times[i][j])
+            #print "i = %d, max_time = %f" % (i, max(times[i]))
+    
+        ## Run the actual simulations.
+        while (net.time < 14400):
+            #net.smallReport()
+            net.advance()
+    
+        cost = net.bigReport()
+        costList.append(cost)
+        print cost
+        
+    costArr = np.array(costList)
+    capEDCs = costArr[:,0]
+    labEDCs = costArr[:,1]
+    failEDCs = costArr[:,2]
+    totEDCs = capEDCs + labEDCs + failEDCs
+    print "average capital cost = %f, stddev = %f" % (np.average(capEDCs), np.std(capEDCs))
+    print "average labor cost = %f, stddev = %f" % (np.average(labEDCs), np.std(labEDCs))
+    print "average failure cost = %f, stddev = %f" % (np.average(failEDCs), np.std(failEDCs))
+    print "average total cost = %f, stddev = %f" % (np.average(totEDCs),np.std(totEDCs))
