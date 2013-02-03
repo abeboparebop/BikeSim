@@ -15,8 +15,10 @@ def weighted_choice(probs):
     return None
 
 class BikeNetwork:
-    def __init__(self, ridesPerDay, loud=True):
+    def __init__(self, ridesPerDay, nStations, loud=True):
         self.G = nx.DiGraph()
+        self.times = np.array(shape(nStations,nStations))
+        self.stationList = []
         self.bikeList = []
         self.amenityList = []
 
@@ -133,7 +135,7 @@ class BikeNetwork:
         return [self.capitalDC, self.laborDC, self.failDC]
 
     def addStation(self,amenity, bikes, docks):
-        self.G.add_node(self.nStations, amenity=amenity, bikes=bikes, docks=docks)
+        self.stationList.append(Station(amenity=amenity, bikes=bikes, docks=docks))
         self.nStations+=1
         self.amenityList.append(amenity)
         if (self.loud):
@@ -635,6 +637,12 @@ class Balancer:
             # Time's up: we're at the destination station.
             return True
 
+class Station:
+    def __init__(self, amenity, bikes, docks):
+        self.amenity = amenity
+        self.bikes = bikes
+        self.docks = docks
+
 
 if __name__=='__main__':
     random.seed(103)
@@ -682,8 +690,8 @@ if __name__=='__main__':
                 dist = 1609*2*3950*math.asin(math.sqrt(math.sin(0.5*(lat[i]-lat[j]))**2+math.cos(lat[i])*math.cos(lat[j])*math.sin(0.5*(lon[i]-lon[j]))**2))
                 
                 times[i][j] = c1*dist + c2*deltaEl
-                net.G.add_edge(i,j,time=times[i][j])
             #print "i = %d, max_time = %f" % (i, max(times[i]))
+        net.times = times
     
         ## Run the actual simulations.
         while (net.time < 14400):
