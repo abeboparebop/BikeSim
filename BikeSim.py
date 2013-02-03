@@ -70,16 +70,16 @@ class BikeNetwork:
             print "t = %d" % (self.time)
             print "\tRiders = %d" % (len(self.bikeList))
             for i in range(self.nStations):
-                stn = self.G.node[i]
-                print "\tStation %d has %d bikes and %d docks." % (i, stn['bikes'], stn['docks'])
+                stn = self.stationList[i]
+                print "\tStation %d has %d bikes and %d docks." % (i, stn.bikes, stn.docks)
 
     def bigReport(self):
         if (self.loud):
             print "t = %d:" % (self.time)
             print "\tRiders = %d" % (len(self.bikeList))
             for i in range(self.nStations):
-                stn = self.G.node[i]
-                print "\tStation %d has %d bikes and %d docks." % (i, stn['bikes'], stn['docks'])
+                stn = self.stationList[i]
+                print "\tStation %d has %d bikes and %d docks." % (i, stn.bikes, stn.docks)
                 
             print "\tTotal rides: %d" % self.nRides
             
@@ -100,7 +100,7 @@ class BikeNetwork:
         
         self.capitalCost = 0
         for i in range(self.nStations):
-            nDocks = self.G.node[i]['docks'] 
+            nDocks = self.stationList[i].docks 
             if (nDocks>= 7 and nDocks < 11):
                 self.capitalCost += self.cES + (nDocks-7)*self.cD
             elif (nDocks<15):
@@ -164,7 +164,7 @@ class BikeNetwork:
                     print "\t\tDrop off %d at station %d in %d minutes." % (el[1], el[0], el[2])
 
     def addRide(self, o, d):
-        if (self.G.node[o]['bikes'] == 0):
+        if (self.stationList[o].bikes == 0):
             ## If the origin station has no bikes, fail out.
             self.nBikeFail[o] += 1
             if (self.loud):
@@ -179,10 +179,10 @@ class BikeNetwork:
             self.nRides += 1
             
             ## Remove a bike from origin station
-            self.G.node[o]['bikes'] -= 1
+            self.stationList[o].bikes -= 1
             if (self.loud):
                 print "Time=%d: new ride started at station %d with destination %d." % (self.time, o, d)
-                print "%d bikes, %d docks remaining at station %d." % (self.G.node[o]['bikes'],self.G.node[o]['docks'], o)
+                print "%d bikes, %d docks remaining at station %d." % (self.stationList[o].bikes,self.stationList[o].docks, o)
 
             ## Record the ride
             self.nOrigin[o]+=1
@@ -235,10 +235,10 @@ class BikeNetwork:
         occupList = []
         myDtype = [('station',int), ('occup', float), ('docks', int), ('need', int), ('bikes', int), ('free',int)]
         for i in range(self.nStations):
-            stn = self.G.node[i]
-            occup = float(stn['bikes'])/stn['docks']
-            need = int((0.5-occup)*stn['docks'])
-            occupList.append((i, occup, stn['docks'], need, stn['bikes'], stn['docks']-stn['bikes']))
+            stn = self.stationList[i]
+            occup = float(stn.bikes)/stn.docks
+            need = int((0.5-occup)*stn.docks)
+            occupList.append((i, occup, stn.docks, need, stn.bikes, stn.docks-stn.bikes))
         
         if (self.algo==0):
             if (len(self.balancerList) < self.maxBalancers):
@@ -317,14 +317,14 @@ class BikeNetwork:
                         break
 
                 if (pickUp != -1 and dropOff != -1):
-                    PUstn = self.G.node[pickUp]
-                    DOstn = self.G.node[dropOff]
+                    PUstn = self.stationList[pickUp]
+                    DOstn = self.stationList[dropOff]
                     
                     ## Leave at least 40% of docks full:
-                    freeBikes = int(PUstn['bikes']-0.4*PUstn['docks'])
+                    freeBikes = int(PUstn.bikes-0.4*PUstn.docks)
                     
                     ## Leave at least 40% of docks free:
-                    needBikes = int(0.6*DOstn['docks'] - DOstn['bikes'])
+                    needBikes = int(0.6*DOstn.docks - DOstn.bikes)
                     transfer = min(freeBikes,needBikes)
 
                     ## Create list of instructions: pickup first then dropoff
@@ -339,7 +339,7 @@ class BikeNetwork:
                     self.dropOffs.append(dropOff)
                     
                 elif (pickUp != -1 and dropOff == -1):
-                    PUstn = self.G.node[pickUp]
+                    PUstn = self.stationList[pickUp]
                     
                     ## Haven't got a drop-off station yet
                     ## Drop off at two stations with most free docks
@@ -349,11 +349,11 @@ class BikeNetwork:
                     dropOff1 = freeSortD[0]['station']
                     dropOff2 = freeSortD[1]['station']
                     
-                    DOstn1 = self.G.node[dropOff1]
-                    DOstn2 = self.G.node[dropOff2]
+                    DOstn1 = self.stationList[dropOff1]
+                    DOstn2 = self.stationList[dropOff2]
 
                     ## Leave at least 40% of docks full:
-                    freeBikes = int(PUstn['bikes']-0.4*PUstn['docks'])
+                    freeBikes = int(PUstn.bikes-0.4*PUstn.docks)
 
                     ## Split the bikes between the two stations
                     howMany = int(freeBikes/2)
@@ -372,7 +372,7 @@ class BikeNetwork:
                     self.dropOffs.append(dropOff2)
 
                 elif (pickUp == -1 and dropOff != -1):
-                    DOstn = self.G.node[dropOff]
+                    DOstn = self.stationList[dropOff]
                     
                     ## Haven't got a pick-up station yet
                     ## Pick up from two stations with most free bikes
@@ -382,11 +382,11 @@ class BikeNetwork:
                     pickUp1 = bikeSortD[0]['station']
                     pickUp2 = bikeSortD[1]['station']
                     
-                    PUstn1 = self.G.node[pickUp1]
-                    PUstn2 = self.G.node[pickUp2]
+                    PUstn1 = self.stationList[pickUp1]
+                    PUstn2 = self.stationList[pickUp2]
 
                     ## Leave at least 40% of docks free:
-                    needBikes = int(0.6*DOstn['docks'] - DOstn['bikes'])
+                    needBikes = int(0.6*DOstn.docks - DOstn.bikes)
 
                     ## Split the bikes between the two stations
                     howMany = int(needBikes/2)
@@ -439,13 +439,13 @@ class BikeNetwork:
         for i, bike in enumerate(self.bikeList):
             if (self.bikeList[i].reached_dest()):
                 d = self.bikeList[i].dest
-                dStn = self.G.node[d]
-                if (dStn['bikes'] < dStn['docks']):
+                dStn = self.stationList[d]
+                if (dStn.bikes < dStn.docks):
                     killList.append(i)
-                    dStn['bikes']+=1
+                    dStn.bikes+=1
                     if (self.loud):
                         print "\tTime=%d: bike %d reached destination %d!" % (self.time,i, d)
-                        print "\tStation %d now has %d bikes, %d docks." % (d, dStn['bikes'], dStn['docks'])
+                        print "\tStation %d now has %d bikes, %d docks." % (d, dStn.bikes, dStn.docks)
                 else:
                     if (self.loud):
                         print "\tTime=%d: dock fail for bike %d at destination %d!" % (self.time, i, d)
@@ -484,14 +484,14 @@ class BikeNetwork:
             if (self.balancerList[i].reached_dest()):
                 # get the destination
                 d = bal.instr[0][0]
-                dStn = self.G.node[d]
+                dStn = self.stationList[d]
                 killList.append(i)
 
                 ## This if statement is for pick-ups.
                 if (bal.instr[0][1] < 0):
                     if (self.loud): print "\tRebalancer %d picking up from station %d" % (i, d)
                     toGet = -bal.instr[0][1]
-                    freeBikes = dStn['bikes'] - 1
+                    freeBikes = dStn.bikes - 1
 
                     ## Remove from pickup list.
                     self.pickUps.remove(d)
@@ -501,22 +501,22 @@ class BikeNetwork:
                         ## Good: now pick up toGet bikes.
                         if (self.loud): print "\tPicking up %d bikes" % (toGet)
                         self.balancerList[i].bikes += toGet
-                        dStn['bikes'] -= toGet
+                        dStn.bikes -= toGet
 
                     elif (freeBikes < toGet):
                         ## Bad: only pick up freeBikes bikes.
                         if (self.loud): print "\tWanted to pick up %d, but only %d bikes free." % (toGet, freeBikes)
                         self.balancerList[i].bikes += freeBikes
-                        dStn['bikes'] -= freeBikes
+                        dStn.bikes -= freeBikes
 
-                    if (self.loud): print "\tStation now has %d bikes, %d docks." % (dStn['bikes'],dStn['docks'])                        
+                    if (self.loud): print "\tStation now has %d bikes, %d docks." % (dStn.bikes,dStn.docks)                        
 
                 ## This if statement is for drop-offs.
                 elif (bal.instr[0][1] > 0):
                     if (self.loud): print "\tRebalancer %d dropping off at station %d" % (i, d)
                     toDrop = bal.instr[0][1]
                     balBikes = bal.bikes
-                    freeSpaces = dStn['docks'] - dStn['bikes'] - 1
+                    freeSpaces = dStn.docks - dStn.bikes - 1
 
                     ## Remove from dropoff list.
                     self.dropOffs.remove(d)
@@ -532,7 +532,7 @@ class BikeNetwork:
                         ## Good: drop the bikes.
                         if (self.loud): print "\tDropping off %d bikes" % (toDrop)
                         self.balancerList[i].bikes -= toDrop
-                        dStn['bikes'] += toDrop
+                        dStn.bikes += toDrop
                         
                     ## Not enough free space?
                     elif (freeSpaces < toDrop):
@@ -540,7 +540,7 @@ class BikeNetwork:
                         ## Drop only freeSpaces bikes and then generate new destination.
                         if (self.loud): print "\tWanted to drop off %d bikes, but only %d docks free." % (toDrop, freeSpaces)
                         self.balancerList[i].bikes -= freeSpaces
-                        dStn['bikes'] += freeSpaces
+                        dStn.bikes += freeSpaces
 
                         ## Then generate new destination.
                         ## Does the rebalancer have other dropoff destinations thereafter?
@@ -561,9 +561,9 @@ class BikeNetwork:
                             maxDocksFree = 0
                             which = 0
                             for k in range(self.nStations):
-                                stn = self.G.node[k]
-                                if (stn['docks'] - stn['bikes'] > maxDocksFree):
-                                    maxDocksFree = stn['docks']-stn['bikes']
+                                stn = self.stationList[k]
+                                if (stn.docks - stn.bikes > maxDocksFree):
+                                    maxDocksFree = stn.docks-stn.bikes
                                     which = k
                         
                             ## Travel time for rebalancer is always 5 minutes drive-time + 1 per bike
