@@ -17,7 +17,7 @@ def weighted_choice(probs):
 class BikeNetwork:
     def __init__(self, ridesPerDay, nStations, loud=True):
         self.G = nx.DiGraph()
-        self.times = np.array(shape(nStations,nStations))
+        self.times = np.zeros(shape=(nStations,nStations))
         self.stationList = []
         self.bikeList = []
         self.amenityList = []
@@ -172,7 +172,7 @@ class BikeNetwork:
 
         else:
             ## Get travel time between orig and dest
-            tTot = self.G[o][d]['time']
+            tTot = self.times[o][d]
 
             ## Create new biker with destination d
             self.bikeList.append(Biker(tTot,d))
@@ -420,12 +420,15 @@ class BikeNetwork:
         ## as well as a Gaussian weighting on distance.
         probList = []
         for i in range(self.nStations):
-            if (self.G.has_edge(orig,i)):
-                time = self.G[orig][i]['time']
-                amenity = self.amenityList[i][0]*self.resD[halfHour] + self.amenityList[i][1]*self.empD[halfHour] + self.amenityList[i][2]*self.svcD[halfHour]
-                prob = amenity*math.exp(-time**2.0/(2*self.tWeight**2.0))
-            else:
-                prob = 0
+            if (i == orig):
+                ## Don't generate trip to origin station.
+                probList.append(0)
+                continue
+
+            time = self.times[orig][i]
+            amenity = self.amenityList[i][0]*self.resD[halfHour] + self.amenityList[i][1]*self.empD[halfHour] + self.amenityList[i][2]*self.svcD[halfHour]
+            prob = amenity*math.exp(-time**2.0/(2*self.tWeight**2.0))
+
             probList.append(prob)
 
         dest = weighted_choice(probList)
@@ -451,18 +454,13 @@ class BikeNetwork:
                         print "\tTime=%d: dock fail for bike %d at destination %d!" % (self.time, i, d)
                     self.nDockFail[d] += 1
                     
-                    # Generate new destination: nearest
-                    # station.
-
-                    # list of times to other stations
-                    timeDict = nx.shortest_path_length(self.G,source=d)
-
-                    # Find the shortest
-                    minTime = 1000000
+                    ## Generate new destination: nearest station.
+                    ## Find the nearest station.
+                    minTime = 10000000
                     which = 0
                     for j in range(self.nStations):
-                        time = timeDict[j]
-                        if (time > 0 and time < minTime):
+                        time = times[d][j]
+                        if (j != d and time < minTime):
                             minTime=time
                             which = j
 
@@ -645,7 +643,7 @@ class Station:
 
 
 if __name__=='__main__':
-    random.seed(103)
+    random.seed(10)
     np.random.seed(5)
 
     ## Initialize network
@@ -676,7 +674,7 @@ if __name__=='__main__':
     costList = []
     for i in range(nSims):
         print "sim %d" % (i+1)
-        net = BikeNetwork(ridesPerDay=194, loud=False)
+        net = BikeNetwork(ridesPerDay=194, nStations=nStations, loud=False)
         for i in range(nStations):
             net.addStation(amenity=[int(pop[i]),int(emp[i]),int(svc[i])], bikes=int(bikeDocks[stateInit[i]][0]), docks=int(bikeDocks[stateInit[i]][1]))
     
